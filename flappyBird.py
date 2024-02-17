@@ -30,7 +30,9 @@ class Bird:
     def think(self, pipe):
         input_data = [self.height/600, self.gravitation/100, pipe.width/600, pipe.higherOne/600, pipe.lowerOne/600]
         input_array = numpy.array([input_data])
-        predictions = self.brain.predict(input_array, verbose=0)
+        # predictions = self.brain.predict(input_array, verbose=0)
+
+        predictions = predict(input_array, self.brain.get_weights())
         if predictions > 0.5:
             self.jump()
 
@@ -178,6 +180,29 @@ def play_game(Birds, Pipes, score, lastGenBirds):
 
     return score
 
+import numpy as np
+
+
+def predict(X, weights):
+    # Początkowe przekształcenie danych wejściowych
+    X = X.reshape((X.shape[0], -1))
+
+    # Pierwsza warstwa Dense z 8 węzłami i funkcją aktywacji ReLU
+    W1 = weights[0]
+    b1 = weights[1]
+    X = np.dot(X, W1) + b1
+    X[X < 0] = 0  # ReLU
+
+    # Warstwa wyjściowa Dense z jednym węzłem i funkcją aktywacji sigmoidalną
+    W2 = weights[2]
+    b2 = weights[3]
+    X = np.dot(X, W2) + b2
+    output = 1 / (1 + np.exp(-X))  # Sigmoid
+
+    return output
+
+
+
 
 if __name__ == "__main__":
     attempt = 1
@@ -211,11 +236,11 @@ if __name__ == "__main__":
 
 
             if not lastGenBirds:
-                for i in range(9):
+                for i in range(100):
                     Birds.append(Bird(brain=createModel(),
                                       height=200+i,
                                       gravitation=0,
-                                      color=colors[i]))
+                                      color=colors[i%9]))
             else:
                 print("NEW GEN")
 
@@ -228,11 +253,11 @@ if __name__ == "__main__":
                         highestScore = tup[1]
                 maxBrain = maxTuple[0].brain
                 lastGenBirds.clear()
-                for i in range(9):
+                for i in range(100):
                     Birds.append(Bird(brain=createChildModel(maxBrain, 0.1),
                                       height=200 + i,
                                       gravitation=0,
-                                      color=colors[i]))
+                                      color=colors[i%9]))
             pygame.init()  # initialize pygame modules
 
             #### display game window #####
