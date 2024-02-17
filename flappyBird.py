@@ -1,153 +1,251 @@
+import os
+os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 import pygame
-import numpy as np
-import time
 import random
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+import numpy
+
+class Bird:
+    def __init__(self, brain, height, gravitation, color):
+        self.brain = brain
+        self.height = height
+        self.gravitation = gravitation
+        self.score = 0
+        self.color = color
+
+    def updateGravitation(self):
+        self.gravitation += 0.3
+
+    def updateHeight(self):
+        self.height += self.gravitation
+
+    def updateScore(self):
+        self.score +=1
+
+    def jump(self):
+        self.gravitation = -7
+
+    def think(self, pipe):
+        input_data = [self.height/600, self.gravitation/100, pipe.width/600, pipe.higherOne/600, pipe.lowerOne/600]
+        input_array = numpy.array([input_data])
+        predictions = self.brain.predict(input_array, verbose=0)
+        if predictions > 0.5:
+            self.jump()
 
 
-def collision_with_pipe(pipes_positions, bird):
-    pipe = pipes_positions[0]
-    if (pipe[2] - bird[0]) > 10 or (pipe[2] - bird[0]) < 0:
-        return False
-    if pipe[0]-10 < bird[1] or pipe[1] > bird[1]:
-        return True
 
 
 
-def collision_with_boundaries(bird_position):
-    if bird_position[1] >= 600 or bird_position[1] < 0:
-        return True
-    else:
-        return False
+
+class Pipe:
+    def __init__(self, lowerOne, higherOne, width):
+        self.lowerOne = lowerOne
+        self.higherOne = higherOne
+        self.width = width
+
+    def update(self):
+        self.width -= 2
 
 
-def generate_pipes(pipes_positions):
-    pipe_height = random.randint(100, 500)
-    pipes_positions.append((pipe_height + 50, pipe_height - 50, display_width))
+def birdsThinking(Birds, pipe):
+    for bird in Birds:
+        bird.think(pipe)
+
+def createModel():
+    model = Sequential()
+    model.add(Dense(10, input_shape=(5,), activation='relu', ))
+    model.add(Dense(1, activation='sigmoid'))
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+    return model
+
+def createChildModel(parent_model, deviation_factor=0.1):
+    child_model = Sequential()
+    for layer in parent_model.layers:
+        if isinstance(layer, Dense):
+            input_shape = layer.input_shape[1:]
+            units = layer.units
+            activation = layer.activation
+            # Wartości wag są losowane z odchyleniem od wag rodzica
+            weights = [weight + numpy.random.normal(scale=deviation_factor) for weight in layer.get_weights()]
+            child_model.add(Dense(units, input_shape=input_shape, activation=activation, weights=weights))
+    child_model.compile(loss=parent_model.loss, optimizer=parent_model.optimizer, metrics=parent_model.metrics)
+    return child_model
+
+def birdsUpdate(Birds):
+    for bird in Birds:
+        bird.updateGravitation()
+        bird.updateHeight()
+        bird.updateScore()
+
+
+def pipesUpdate(Pipes):
+    if Pipes[0].width < 100:
+        Pipes.pop(0)
+    for pipe in Pipes:
+        pipe.update()
+
+
+def collision_with_pipe(pipe, Birds, lastGenBirds):
+    if 150 < pipe.width < 160:
+        newBirds = []
+        for bird in Birds:
+            if bird.height > pipe.lowerOne or bird.height < pipe.higherOne:
+                lastGenBirds.append((Birds[Birds.index(bird)], bird.score))
+                Birds.pop(Birds.index(bird))
+
+
+def collision_with_boundaries(Birds, lastGenBirds):
+    for bird in Birds:
+        if bird.height > 600 or bird.height < 0:
+            lastGenBirds.append((Birds[Birds.index(bird)], bird.score))
+            Birds.pop(Birds.index(bird))
+
+
+def generate_pipes(pipes):
+    pipe_height = random.randint(150, 400)
+    pipes.append(Pipe(lowerOne = pipe_height + 100, higherOne =pipe_height - 100, width=600))
+
+
+def display_birds(birds):
+    for bird in birds:
+        pygame.draw.rect(display, bird.color, pygame.Rect(150, bird.height, 10, 10))
+
+
+def display_pipes(pipes):
+    for pipe in pipes:
+        pygame.draw.rect(display, window_color, pygame.Rect(pipe.width, 0, 15, pipe.higherOne))
+        pygame.draw.rect(display, window_color, pygame.Rect(pipe.width, pipe.lowerOne, 15, 600 - pipe.lowerOne))
+
+
+def display_score(score1):
+    largeText = pygame.font.Font('freesansbold.ttf', 15)
+    textSurf = largeText.render(f'Score: {score1}', True, window_color)
+    display.blit(textSurf, (10, 10))
+
+    largeText = pygame.font.Font('freesansbold.ttf', 15)
+    textSurf = largeText.render(f'Highest Score: {highestScore}', True, window_color)
+    display.blit(textSurf, (10, 30))
 
 
 
-def display_bird(bird_position):
-    pygame.draw.rect(display, red, pygame.Rect(bird_position[0], bird_position[1], 10, 10))
 
 
-def display_pipes(pipes_positions):
-    for pipe in pipes_positions:
-        if pipe[2] < 0:
-            pipes_positions.pop(0)
-        pygame.draw.rect(display, black, pygame.Rect(pipe[2], 0, 10, pipe[1]))
-        pygame.draw.rect(display, black, pygame.Rect(pipe[2], pipe[0], 10, 600 - pipe[0]))
-
-def display_score(score):
-    largeText = pygame.font.Font('freesansbold.ttf',15)
-    TextSurf = largeText.render(f'Score: {score}', True, black)
-    display.blit(TextSurf, (10, 10))
-
-
-def play_game(gravitation, bird_position, pipes_positions, score):
-    timer = 0
+def play_game(Birds, Pipes, score, lastGenBirds):
     crashed = False
-    serialized_data = None;
+    timer = 0
 
     while crashed is not True:
         if timer == 0:
-            generate_pipes(pipes_positions)
-            timer = 120
+            generate_pipes(Pipes)
+            timer = 200
 
-        for pipe in pipes_positions:
-            if pipe[2] < bird_position[0]:
-                continue
-            data = [attempt, bird_position[0], pipe[2], pipe[1], pipe[0]]
-            serialized_data = ",".join(map(str, data)).encode()
-        #podejscie, wysokosc ptaka, pozycja dziury, wysokosc gorna dziury, wysokosc dolna dziury
+        if timer%10==0:
+            birdsThinking(Birds, Pipes[0])
 
-        s.sendall(serialized_data)
-        # Odbiór odpowiedzi od plikNeuron
-        odpowiedz = s.recv(1024).decode()
-        # print("Odpowiedź od plikNeuron:", odpowiedz)
-
-        # Symulacja wykonania skoku lub nieskoku na podstawie odpowiedzi
-        if odpowiedz == 'True':
-            # print("Wykonaj skok!")
-            gravitation = -8
 
         for event in pygame.event.get():
-
-            if event.type == pygame.QUIT:
-                crashed = True
             if event.type == pygame.KEYUP:
-                gravitation = -8
-                # TU NAPISAC CO SIE DZIEJE GDY PODSKOCZE
+                for bird in Birds:
+                    bird.gravitation = -7
 
 
+        # collision_with_pipe(Pipes[0], Birds)
+        collision_with_boundaries(Birds, lastGenBirds)
+        collision_with_pipe(Pipes[0], Birds, lastGenBirds)
 
-        for i in range(len(pipes_positions)):
-            tuple_value = pipes_positions[i]
-            new_tuple = (tuple_value[0], tuple_value[1], tuple_value[2] - 2)
-            pipes_positions[i] = new_tuple
-
-        crashed = collision_with_boundaries(bird_position) or collision_with_pipe(pipes_positions, bird_position)
-
-        display.fill(window_color)
-        display_bird(bird_position)
-        display_pipes(pipes_positions)
+        #display birds, pipes, score
+        display.fill(black)
+        display_birds(Birds)
+        display_pipes(Pipes)
         display_score(score)
 
+        #update everything
+        pipesUpdate(Pipes)
+        birdsUpdate(Birds)
+        timer -= 1
+        score += 1
+        # clock.tick(60)
+
+        #display display
         pygame.display.set_caption("FlappyBird" + "  " + "SCORE: " + str(score))
         pygame.display.update()
 
-        bird_position[1] += gravitation
-        gravitation += 0.5
-        timer -= 1
-        score += 1
-        clock.tick(240)
+        if not Birds:
+            print(lastGenBirds)
+            break
 
     return score
 
 
-import socket
-
 if __name__ == "__main__":
-    HOST = '127.0.0.1'  # Adres localhost
-    PORT = 65432  # Port do komunikacji
-
     attempt = 1
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((HOST, PORT))  # Nawiązanie połączenia
-        print("Connected")
-        # Symulacja gry
-
-
-
-        while True:
-            ###### initialize required parameters ########
-            display_width = 600
-            display_height = 600
-            green = (0, 255, 0)
-            red = (255, 0, 0)
-            black = (0, 0, 0)
-            window_color = (200, 200, 200)
-            clock = pygame.time.Clock()
-
-
-            gravitation = 0
-            flappy_bird_position = [150, 300]
-            pipes_positions = []
+    colors = [(255, 89, 94),
+              (255, 202, 58),
+              (138, 201, 38),
+              (25, 130, 196),
+              (106, 76, 147),
+              (255, 146, 76),
+              (82, 166, 117),
+              (232, 252, 207),
+              (248, 173, 157)]
+    ###### initialize required parameters ########
+    display_width = 600
+    display_height = 600
+    green = (0, 255, 0)
+    red = (255, 0, 0)
+    black = (0, 0, 0)
+    window_color = (200, 200, 200)
+    clock = pygame.time.Clock()
+    random.seed(69)
+    lastGenBirds = []
+    maxscore = 0
+    maxTuple = ()
+    highestScore = 0
+    while True:
+            random.seed(69)
+            Birds = []
+            Pipes = []
             score = 0
 
-            random.seed(69)
+
+            if not lastGenBirds:
+                for i in range(9):
+                    Birds.append(Bird(brain=createModel(),
+                                      height=200+i,
+                                      gravitation=0,
+                                      color=colors[i]))
+            else:
+                print("NEW GEN")
 
 
+
+                for tup in lastGenBirds:
+                    if maxscore < tup[1]:
+                        maxscore = tup[1]
+                        maxTuple = tup
+                        highestScore = tup[1]
+                maxBrain = maxTuple[0].brain
+                lastGenBirds.clear()
+                for i in range(9):
+                    Birds.append(Bird(brain=createChildModel(maxBrain, 0.1),
+                                      height=200 + i,
+                                      gravitation=0,
+                                      color=colors[i]))
             pygame.init()  # initialize pygame modules
 
             #### display game window #####
-
             display = pygame.display.set_mode((display_width, display_height))
             display.fill(window_color)
             pygame.display.update()
 
-            final_score = play_game(gravitation, flappy_bird_position, pipes_positions, score)
+            final_score = play_game(Birds, Pipes, score, lastGenBirds)
             print(f"Attempt: {attempt}, FINAL SCORE: {final_score}")
             attempt+=1
-            pygame.quit()
+
+            #JAKAS FUNKCJA CO BEDZIE USPRAWNIALA NASZE TESTOWANE PTASZORY
+
+    # pygame.quit()
 
 
